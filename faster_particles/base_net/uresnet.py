@@ -40,14 +40,11 @@ class UResNet(BaseNet):
     def resnet_module(self, input_tensor, num_outputs, trainable=True, kernel=(3,3), stride=1, scope='noscope'):
         num_inputs  = input_tensor.get_shape()[-1].value
         with tf.variable_scope(scope):
-            #
-            # shortcut path
-            #
             shortcut = None
             if num_outputs == num_inputs and stride ==1 :
                 shortcut = input_tensor
             else:
-                shortcut = self.fn_conv(inputs      = input_tensor,
+                shortcut = fn_conv(inputs      = input_tensor,
                                    num_outputs = num_outputs,
                                    kernel_size = 1,
                                    stride      = stride,
@@ -60,7 +57,12 @@ class UResNet(BaseNet):
             # residual path
             #
             residual = input_tensor
-            residual = self.fn_conv(inputs      = residual,
+            #residual = L.batch_norm(inputs     = residual,
+            #                        epsilon    = 0.00001,
+            #                        activation_fn = tf.nn.relu,
+            #                        scope      = 'resnet_bn1',
+            #                        trainable  = trainable)
+            residual = fn_conv(inputs      = residual,
                                num_outputs = num_outputs,
                                kernel_size = kernel,
                                stride      = stride,
@@ -69,8 +71,13 @@ class UResNet(BaseNet):
                                normalizer_fn = slim.batch_norm,
                                activation_fn = None,
                                scope       = 'resnet_conv1')
-
-            residual = self.fn_conv(inputs      = residual,
+            
+            #residual = L.batch_norm(inputs     = residual,
+            #                        epsilon    = 0.00001,
+            #                        activation_fn = tf.nn.relu,
+            #                        scope      = 'resnet_bn2',
+            #                        trainable  = trainable)
+            residual = fn_conv(inputs      = residual,
                                num_outputs = num_outputs,
                                kernel_size = kernel,
                                stride      = 1,
@@ -79,9 +86,9 @@ class UResNet(BaseNet):
                                normalizer_fn = slim.batch_norm,
                                activation_fn = None,
                                scope       = 'resnet_conv2')
-
+            
             return tf.nn.relu(shortcut + residual)
-
+        
     def double_resnet(self, input_tensor, num_outputs, trainable=True, kernel=3, stride=1, scope='noscope'):
         with tf.variable_scope(scope):
             resnet1 = self.resnet_module(input_tensor=input_tensor,
@@ -106,9 +113,10 @@ class UResNet(BaseNet):
                 net = self.fn_conv(
                     inputs = image_placeholder,
                     num_outputs = self.base_num_outputs,
-                    kernel_size = 7,
+                    kernel_size = 3,
                     stride = 1,
                 #    activation_fn = tf.nn.relu, FIXME this is default?
+                    normalizer_fn = slim.batch_norm,
                     padding = 'same',
                     scope = 'conv0')
                 self.conv_feature_map[net.get_shape()[-1].value] = net
@@ -145,6 +153,7 @@ class UResNet(BaseNet):
                                                 num_outputs = num_outputs,
                                                 kernel_size = 3,
                                                 stride      = 2,
+                                                normalizer_fn = slim.batch_norm,
                                                 padding     = 'same',
                                                 scope       = 'deconv%d' % step)
                     else:
@@ -152,6 +161,7 @@ class UResNet(BaseNet):
                                                 num_outputs = num_outputs,
                                                 kernel_size = 3,
                                                 stride      = 2,
+                                                normalizer_fn = slim.batch_norm
                                                 padding     = 'same',
                                                 scope       = 'deconv%d' % step,
                                                 biases_initializer = None)
@@ -165,20 +175,26 @@ class UResNet(BaseNet):
                                         stride       = 1,
                                         scope        = 'resnet_module%d' % (step+5))
 
+
                 # Final conv layers
                 net = self.fn_conv(inputs      = net,
-                              num_outputs = self.base_num_outputs,
-                              padding     = 'same',
-                              kernel_size = 7,
-                              stride      = 1,
-                              scope       = 'conv1')
+                                   num_outputs = self.base_num_outputs,
+                                   padding     = 'same',
+                                   kernel_size = 3,
+                                   stride      = 1,
+                                   trainable   = is_training,
+                                   normalizer_fn = slim.batch_norm,
+                                   activation_fn = tf.nn.relu,
+                                   scope       = 'conv1')
                 net = self.fn_conv(inputs      = net,
-                              num_outputs = self.num_classes,
-                              padding     = 'same',
-                              kernel_size = 3,
-                              stride      = 1,
-                              activation_fn = None,
-                              scope = 'conv2')
+                                   num_outputs = self.num_classes,
+                                   padding     = 'same',
+                                   kernel_size = 3,
+                                   stride      = 1,
+                                   trainable   = is_training,
+                                   normalizer_fn = slim.batch_norm,
+                                   activation_fn = None,
+                                   scope       = 'conv2')
 
                 self._softmax = tf.nn.softmax(logits=net)
                 self._predictions = tf.argmax(self._softmax, axis=-1)
