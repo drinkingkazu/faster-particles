@@ -4,7 +4,7 @@ import tensorflow.contrib.slim as slim
 from base_net import BaseNet
 
 class UResNet(BaseNet):
-    def __init__(self, cfg, N=0):
+    def __init__(self, cfg, N=0, debug=False):
         super(UResNet, self).__init__(cfg, N=N)
         self.fn_conv = slim.conv2d
         self.fn_conv_transpose = slim.conv2d_transpose
@@ -14,7 +14,9 @@ class UResNet(BaseNet):
 
         self.conv_feature_map = {}
         self.base_num_outputs = 16
-        self._num_strides = 3#4
+        self._num_strides = 5
+
+        self._debug = bool(debug)
 
     def init_placeholders(self, image=None, labels=None):
         if self.is_3d:
@@ -44,7 +46,7 @@ class UResNet(BaseNet):
             if num_outputs == num_inputs and stride ==1 :
                 shortcut = input_tensor
             else:
-                shortcut = fn_conv(inputs      = input_tensor,
+                shortcut = self.fn_conv(inputs      = input_tensor,
                                    num_outputs = num_outputs,
                                    kernel_size = 1,
                                    stride      = stride,
@@ -62,7 +64,7 @@ class UResNet(BaseNet):
             #                        activation_fn = tf.nn.relu,
             #                        scope      = 'resnet_bn1',
             #                        trainable  = trainable)
-            residual = fn_conv(inputs      = residual,
+            residual = self.fn_conv(inputs      = residual,
                                num_outputs = num_outputs,
                                kernel_size = kernel,
                                stride      = stride,
@@ -77,7 +79,7 @@ class UResNet(BaseNet):
             #                        activation_fn = tf.nn.relu,
             #                        scope      = 'resnet_bn2',
             #                        trainable  = trainable)
-            residual = fn_conv(inputs      = residual,
+            residual = self.fn_conv(inputs      = residual,
                                num_outputs = num_outputs,
                                kernel_size = kernel,
                                stride      = 1,
@@ -97,12 +99,14 @@ class UResNet(BaseNet):
                                     stride=stride,
                                     num_outputs=num_outputs,
                                     scope='module1')
+            if self._debug: print(resnet1.shape, 'after %s.module1' % scope)
             resnet2 = self.resnet_module(input_tensor=resnet1,
                                     trainable=trainable,
                                     kernel=kernel,
                                     stride=1,
                                     num_outputs=num_outputs,
                                     scope='module2')
+            if self._debug: print(resnet2.shape, 'after %s.module2' % scope)
         return resnet2
 
     def build_base_net(self, image_placeholder, is_training=True, reuse=False, scope="uresnet"):
@@ -119,6 +123,7 @@ class UResNet(BaseNet):
                     normalizer_fn = slim.batch_norm,
                     padding = 'same',
                     scope = 'conv0')
+                if self._debug: print(net.shape, 'after conv0')
                 self.conv_feature_map[net.get_shape()[-1].value] = net
                 # Encoding steps
                 for step in xrange(self._num_strides):
@@ -126,7 +131,7 @@ class UResNet(BaseNet):
                                         num_outputs  = net.get_shape()[-1].value * 2,
                                         kernel       = 3,
                                         stride       = 2,
-                                        scope        = 'resnet_module%d' % step)
+                                        scope        = 'encode_stage%d' % step)
                     self.conv_feature_map[net.get_shape()[-1].value] = net
 
         keys = np.sort(self.conv_feature_map.keys())
@@ -143,6 +148,7 @@ class UResNet(BaseNet):
         with slim.arg_scope([self.fn_conv, self.fn_conv_transpose, slim.fully_connected],
                             normalizer_fn=slim.batch_norm,
                             trainable=is_training):
+            if self._debug: print(self.image_placeholder.shape, 'input shape')
             _, net = self.build_base_net(self.image_placeholder, is_training=is_training, reuse=reuse, scope=scope)
             with tf.variable_scope(scope, reuse=self.reuse):
                 # Decoding steps
@@ -161,19 +167,20 @@ class UResNet(BaseNet):
                                                 num_outputs = num_outputs,
                                                 kernel_size = 3,
                                                 stride      = 2,
-                                                normalizer_fn = slim.batch_norm
+                                                normalizer_fn = slim.batch_norm,
                                                 padding     = 'same',
                                                 scope       = 'deconv%d' % step,
                                                 biases_initializer = None)
-
+                    if self._debug: print(net.shape, 'after deconv%d' % step)
                     net = tf.concat([net, self.conv_feature_map[num_outputs]],
                                     axis=len(net.shape)-1,
                                     name='concat%d' % step)
+                    if self._debug: print(net.shape, 'after concat%d' % step)
                     net = self.double_resnet(input_tensor = net,
                                         num_outputs  = num_outputs,
                                         kernel       = 3,
                                         stride       = 1,
-                                        scope        = 'resnet_module%d' % (step+5))
+                                        scope        = 'decode_stage%d' % (step+5))
 
 
                 # Final conv layers
@@ -186,6 +193,7 @@ class UResNet(BaseNet):
                                    normalizer_fn = slim.batch_norm,
                                    activation_fn = tf.nn.relu,
                                    scope       = 'conv1')
+                if self._debug: print(net.shape, 'after conv1')
                 net = self.fn_conv(inputs      = net,
                                    num_outputs = self.num_classes,
                                    padding     = 'same',
@@ -195,7 +203,7 @@ class UResNet(BaseNet):
                                    normalizer_fn = slim.batch_norm,
                                    activation_fn = None,
                                    scope       = 'conv2')
-
+                if self._debug: print(net.shape, 'after conv2')
                 self._softmax = tf.nn.softmax(logits=net)
                 self._predictions = tf.argmax(self._softmax, axis=-1)
 
@@ -227,7 +235,7 @@ if __name__ == '__main__':
         NUM_CLASSES = 3
         LEARNING_RATE = 0.001
         DATA_3D = True
-    v = UResNet(cfg=config())
+    v = UResNet(cfg=config(),debug=True)
     print(dir(v))
     v.init_placeholders()
     v.create_architecture()
